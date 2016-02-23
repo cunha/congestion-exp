@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math/rand"
+	"net/http"
 	"sort"
 	"time"
 )
@@ -31,9 +32,16 @@ func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(duration int64, targe
 	ctg.Done = done
 }
 
-//func (ctg *CrossTrafficGenerator) Fetch(target string, done chan int64) {
 func (ctg *CrossTrafficGenerator) Fetch(curr CrossTrafficComponent, fetchChan chan int64, eventCounter int64) {
-	fmt.Println(curr.Name, curr.NextEvent, eventCounter)
+	//fmt.Println(ctg.Target, curr.Name, curr.NextEvent, eventCounter)
+	fmt.Println("fetch", curr.Name, eventCounter)
+	resp, err := http.Get(ctg.Target + "/" + curr.Name)
+	if err != nil {
+		fmt.Println("error", curr.Name, eventCounter)
+		fetchChan <- eventCounter
+		return
+	}
+	defer resp.Body.Close()
 	fetchChan <- eventCounter
 }
 
