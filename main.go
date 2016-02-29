@@ -7,7 +7,7 @@ import (
 )
 
 type InputConf struct {
-	Target                 string                  `json:"target"`
+	Targets                []string                `json:"targets"`
 	Duration               int64                   `json:"duration"`
 	CrossTrafficComponents []CrossTrafficComponent `json:"cross_traffic_components"`
 }
@@ -22,7 +22,7 @@ func main() {
 	err = json.Unmarshal(confFile, &conf)
 	ctg := new(CrossTrafficGenerator)
 	done := make(chan int64)
-	ctg.NewCrossTrafficGenerator(conf.Duration, conf.Target, conf.CrossTrafficComponents, done)
+	ctg.NewCrossTrafficGenerator(conf.Duration, conf.Targets, conf.CrossTrafficComponents, done)
 	go ctg.Run()
 	<-done
 }

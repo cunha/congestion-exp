@@ -18,15 +18,15 @@ type CrossTrafficComponentArr []CrossTrafficComponent
 
 type CrossTrafficGenerator struct {
 	Duration               int64
-	Target                 string
+	Targets                []string
 	CrossTrafficComponents CrossTrafficComponentArr
 	Start                  int64
 	End                    int64
 	Done                   chan int64
 }
 
-func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(duration int64, target string, ctc CrossTrafficComponentArr, done chan int64) {
-	ctg.Target = target
+func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(duration int64, targets []string, ctc CrossTrafficComponentArr, done chan int64) {
+	ctg.Targets = targets
 	ctg.Duration = duration
 	ctg.CrossTrafficComponents = ctc
 	ctg.Done = done
@@ -34,8 +34,9 @@ func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(duration int64, targe
 
 func (ctg *CrossTrafficGenerator) Fetch(curr CrossTrafficComponent, fetchChan chan int64, eventCounter int64) {
 	//fmt.Println(ctg.Target, curr.Name, curr.NextEvent, eventCounter)
-	fmt.Println("fetch", curr.Name, eventCounter)
-	resp, err := http.Get(ctg.Target + "/" + curr.Name)
+	tIndex := rand.Int31n(int32(len(ctg.Targets)))
+	fmt.Println("fetch", ctg.Targets[tIndex], curr.Name, eventCounter)
+	resp, err := http.Get(ctg.Targets[tIndex] + "/" + curr.Name)
 	if err != nil {
 		fmt.Println("error", curr.Name, eventCounter)
 		fetchChan <- eventCounter
