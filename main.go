@@ -2,8 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"log"
+	"net/http"
 )
 
 type InputConf struct {
@@ -12,17 +12,41 @@ type InputConf struct {
 	CrossTrafficComponents []CrossTrafficComponent `json:"cross_traffic_components"`
 }
 
-func main() {
-	var conf InputConf
+var crossTrafficOn bool
+var done chan int64
 
-	confFile, err := ioutil.ReadFile("input.conf")
-	if err != nil {
-		log.Fatal("opening conf file: ", err.Error())
+func CongestionStart(w http.ResponseWriter, r *http.Request) {
+	if crossTrafficOn {
+		w.WriteHeader(http.StatusTooManyRequests)
+		return
 	}
-	err = json.Unmarshal(confFile, &conf)
+	crossTrafficOn = true
+	var conf InputConf
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&conf)
+	if err != nil {
+		log.Fatal("error parsing json: ", err.Error())
+	}
+	log.Println("Starting capture")
 	ctg := new(CrossTrafficGenerator)
-	done := make(chan int64)
+	done = make(chan int64)
 	ctg.NewCrossTrafficGenerator(conf.Duration, conf.Targets, conf.CrossTrafficComponents, done)
 	go ctg.Run()
 	<-done
+	crossTrafficOn = false
+	log.Println(ctg.CounterStart, " flows started, ", ctg.CounterEnd, " completed, ", ctg.CounterBytes, " bytes downloaded")
+}
+
+func CongestionStop(w http.ResponseWriter, r *http.Request) {
+	if crossTrafficOn {
+		done <- 1
+	}
+}
+
+func main() {
+
+	http.HandleFunc("/congestion_start", CongestionStart)
+	http.HandleFunc("/congestion_stop", CongestionStop)
+  crossTrafficOn = false
+	log.Fatal(http.ListenAndServe(":9001", nil))
 }

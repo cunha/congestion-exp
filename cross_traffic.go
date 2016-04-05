@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"math/rand"
 	"net/http"
 	"sort"
+	"io/ioutil"
 	"time"
 )
 
@@ -23,6 +23,9 @@ type CrossTrafficGenerator struct {
 	Start                  int64
 	End                    int64
 	Done                   chan int64
+	CounterStart					 int64
+	CounterEnd  					 int64
+	CounterBytes					 int64
 }
 
 func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(duration int64, targets []string, ctc CrossTrafficComponentArr, done chan int64) {
@@ -35,14 +38,18 @@ func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(duration int64, targe
 func (ctg *CrossTrafficGenerator) Fetch(curr CrossTrafficComponent, fetchChan chan int64, eventCounter int64) {
 	//fmt.Println(ctg.Target, curr.Name, curr.NextEvent, eventCounter)
 	tIndex := rand.Int31n(int32(len(ctg.Targets)))
-	fmt.Println("fetch", ctg.Targets[tIndex], curr.Name, eventCounter)
-	resp, err := http.Get(ctg.Targets[tIndex] + "/" + curr.Name)
+	target := ctg.Targets[tIndex] + "/" + curr.Name
+	ctg.CounterStart++
+	resp, err := http.Get(target)
 	if err != nil {
-		fmt.Println("error", curr.Name, eventCounter)
+		//fmt.Println("error", curr.Name, eventCounter)
 		fetchChan <- eventCounter
 		return
 	}
 	defer resp.Body.Close()
+	body, _:= ioutil.ReadAll(resp.Body)
+	ctg.CounterEnd++
+	ctg.CounterBytes += int64(len(body))
 	fetchChan <- eventCounter
 }
 
@@ -65,7 +72,7 @@ func (ctg *CrossTrafficGenerator) InitializeEventArr() {
 func (ctg *CrossTrafficGenerator) Run() {
 	fetchChan := make(chan int64, 1e6)
 	var eventCounter int64 = 0
-	var eventDone int64
+	//var eventDone int64
 
 	ctg.InitializeEventArr()
 	now := time.Now().UTC().UnixNano()
@@ -81,9 +88,9 @@ func (ctg *CrossTrafficGenerator) Run() {
 		}
 		now = time.Now().UTC().UnixNano()
 	}
-	for eventDone < eventCounter {
-		<-fetchChan
-		eventDone++
-	}
+	//for eventDone < eventCounter {
+	//	<-fetchChan
+	//	eventDone++
+	//}
 	ctg.Done <- 1
 }
