@@ -14,6 +14,7 @@ type InputConf struct {
 
 var crossTrafficOn bool
 var done chan int64
+var stopRunning chan int64
 
 func CongestionStart(w http.ResponseWriter, r *http.Request) {
 	if crossTrafficOn {
@@ -43,10 +44,17 @@ func CongestionStop(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func main() {
+func ServiceStop(w http.ResponseWriter, r *http.Request) {
+	CongestionStop(w, r)
+	stopRunning <- 1
+}
 
+func main() {
 	http.HandleFunc("/congestion_start", CongestionStart)
 	http.HandleFunc("/congestion_stop", CongestionStop)
-  crossTrafficOn = false
-	log.Fatal(http.ListenAndServe(":9001", nil))
+	http.HandleFunc("/service_stop", ServiceStop)
+	crossTrafficOn = false
+	stopRunning = make(chan int64)
+	go http.ListenAndServe(":9001", nil)
+	<-stopRunning
 }
