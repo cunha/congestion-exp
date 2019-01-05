@@ -1,10 +1,12 @@
 package main
 
 import (
+	"io/ioutil"
+	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	"sort"
-	"io/ioutil"
 	"time"
 )
 
@@ -17,18 +19,20 @@ type CrossTrafficComponent struct {
 type CrossTrafficComponentArr []CrossTrafficComponent
 
 type CrossTrafficGenerator struct {
+	LocalAddr              string
 	Duration               int64
 	Targets                []string
 	CrossTrafficComponents CrossTrafficComponentArr
 	Start                  int64
 	End                    int64
 	Done                   chan int64
-	CounterStart					 int64
-	CounterEnd  					 int64
-	CounterBytes					 int64
+	CounterStart           int64
+	CounterEnd             int64
+	CounterBytes           int64
 }
 
-func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(duration int64, targets []string, ctc CrossTrafficComponentArr, done chan int64) {
+func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(localAddr string, duration int64, targets []string, ctc CrossTrafficComponentArr, done chan int64) {
+	ctg.LocalAddr = localAddr
 	ctg.Targets = targets
 	ctg.Duration = duration
 	ctg.CrossTrafficComponents = ctc
@@ -37,17 +41,42 @@ func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(duration int64, targe
 
 func (ctg *CrossTrafficGenerator) Fetch(curr CrossTrafficComponent, fetchChan chan int64, eventCounter int64) {
 	//fmt.Println(ctg.Target, curr.Name, curr.NextEvent, eventCounter)
+	localAddr, err := net.ResolveIPAddr("ip", ctg.LocalAddr)
+	if err != nil {
+		panic(err)
+	}
+	localTCPAddr := net.TCPAddr{
+		IP: localAddr.IP,
+	}
+
+	webclient := &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				LocalAddr: &localTCPAddr,
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+				DualStack: false,
+			}).DialContext,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
+
 	tIndex := rand.Int31n(int32(len(ctg.Targets)))
 	target := ctg.Targets[tIndex] + "/" + curr.Name
 	ctg.CounterStart++
-	resp, err := http.Get(target)
+	log.Printf("CrossTrafficGenerator.Fetch %s\n", target)
+	resp, err := webclient.Get(target)
 	if err != nil {
 		//fmt.Println("error", curr.Name, eventCounter)
 		fetchChan <- eventCounter
 		return
 	}
 	defer resp.Body.Close()
-	body, _:= ioutil.ReadAll(resp.Body)
+	body, _ := ioutil.ReadAll(resp.Body)
 	ctg.CounterEnd++
 	ctg.CounterBytes += int64(len(body))
 	fetchChan <- eventCounter
@@ -73,6 +102,8 @@ func (ctg *CrossTrafficGenerator) Run() {
 	fetchChan := make(chan int64, 1e6)
 	var eventCounter int64 = 0
 	//var eventDone int64
+
+	log.Println("CrossTrafficGenerator.Run")
 
 	ctg.InitializeEventArr()
 	now := time.Now().UTC().UnixNano()

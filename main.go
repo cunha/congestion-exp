@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 )
 
 type InputConf struct {
@@ -12,6 +15,7 @@ type InputConf struct {
 	CrossTrafficComponents []CrossTrafficComponent `json:"cross_traffic_components"`
 }
 
+var localAddrStr string
 var crossTrafficOn bool
 var done chan int64
 var stopRunning chan int64
@@ -26,12 +30,12 @@ func CongestionStart(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	err := decoder.Decode(&conf)
 	if err != nil {
-		log.Fatal("error parsing json: ", err.Error())
+		panic(err)
 	}
 	log.Println("Starting capture")
 	ctg := new(CrossTrafficGenerator)
 	done = make(chan int64)
-	ctg.NewCrossTrafficGenerator(conf.Duration, conf.Targets, conf.CrossTrafficComponents, done)
+	ctg.NewCrossTrafficGenerator(localAddrStr, conf.Duration, conf.Targets, conf.CrossTrafficComponents, done)
 	go ctg.Run()
 	<-done
 	crossTrafficOn = false
@@ -50,11 +54,18 @@ func ServiceStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	localAddrStr = os.Args[1]
+	localPort, err := strconv.ParseUint(os.Args[2], 10, 16)
+	if err != nil {
+		panic(err)
+	}
 	http.HandleFunc("/congestion_start", CongestionStart)
 	http.HandleFunc("/congestion_stop", CongestionStop)
 	http.HandleFunc("/service_stop", ServiceStop)
 	crossTrafficOn = false
 	stopRunning = make(chan int64)
-	go http.ListenAndServe(":9001", nil)
+	go http.ListenAndServe(
+		fmt.Sprintf("%s:%d", localAddrStr, localPort),
+		nil)
 	<-stopRunning
 }
