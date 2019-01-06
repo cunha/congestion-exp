@@ -25,18 +25,18 @@ type CrossTrafficGenerator struct {
 	CrossTrafficComponents CrossTrafficComponentArr
 	Start                  int64
 	End                    int64
-	Done                   chan int64
 	CounterStart           int64
 	CounterEnd             int64
 	CounterBytes           int64
+	// Done                   chan int64
 }
 
-func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(localAddr string, duration int64, targets []string, ctc CrossTrafficComponentArr, done chan int64) {
+func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(localAddr string, duration int64, targets []string, ctc CrossTrafficComponentArr) {
 	ctg.LocalAddr = localAddr
 	ctg.Targets = targets
 	ctg.Duration = duration
 	ctg.CrossTrafficComponents = ctc
-	ctg.Done = done
+	// ctg.Done = done
 }
 
 func (ctg *CrossTrafficGenerator) Fetch(curr CrossTrafficComponent, fetchChan chan int64, eventCounter int64) {
@@ -123,5 +123,5 @@ func (ctg *CrossTrafficGenerator) Run() {
 	//	<-fetchChan
 	//	eventDone++
 	//}
-	ctg.Done <- 1
+	//ctg.Done <- 1
 }

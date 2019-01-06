@@ -17,8 +17,9 @@ type InputConf struct {
 
 var localAddrStr string
 var crossTrafficOn bool
-var done chan int64
 var stopRunning chan int64
+
+// var done chan int64
 
 func CongestionStart(w http.ResponseWriter, r *http.Request) {
 	if crossTrafficOn {
@@ -34,18 +35,20 @@ func CongestionStart(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Println("Starting capture")
 	ctg := new(CrossTrafficGenerator)
-	done = make(chan int64)
-	ctg.NewCrossTrafficGenerator(localAddrStr, conf.Duration, conf.Targets, conf.CrossTrafficComponents, done)
+	// done = make(chan int64)
+	// ctg.NewCrossTrafficGenerator(localAddrStr, conf.Duration, conf.Targets, conf.CrossTrafficComponents, done)
+	ctg.NewCrossTrafficGenerator(localAddrStr, conf.Duration, conf.Targets, conf.CrossTrafficComponents)
 	go ctg.Run()
-	<-done
-	crossTrafficOn = false
-	log.Println(ctg.CounterStart, " flows started, ", ctg.CounterEnd, " completed, ", ctg.CounterBytes, " bytes downloaded")
+	// <-done
+	// crossTrafficOn = false
+	// log.Println(ctg.CounterStart, " flows started, ", ctg.CounterEnd, " completed, ", ctg.CounterBytes, " bytes downloaded")
 }
 
 func CongestionStop(w http.ResponseWriter, r *http.Request) {
-	if crossTrafficOn {
-		done <- 1
-	}
+	// if crossTrafficOn {
+	// 	done <- 1
+	// }
+	return
 }
 
 func ServiceStop(w http.ResponseWriter, r *http.Request) {
