@@ -1,12 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"net"
 	"net/http"
 	"sort"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,6 +23,8 @@ type CrossTrafficComponentArr []CrossTrafficComponent
 type CrossTrafficGenerator struct {
 	LocalAddr              string
 	Duration               int64
+	MaxConcurrentFetches   int64
+	OngoingFetches         int64
 	Targets                []string
 	CrossTrafficComponents CrossTrafficComponentArr
 	Start                  int64
@@ -28,19 +32,18 @@ type CrossTrafficGenerator struct {
 	CounterStart           int64
 	CounterEnd             int64
 	CounterBytes           int64
-	// Done                   chan int64
 }
 
-func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(localAddr string, duration int64, targets []string, ctc CrossTrafficComponentArr) {
+func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(localAddr string, duration int64, maxConcurrentFetches int64, targets []string, ctc CrossTrafficComponentArr) {
 	ctg.LocalAddr = localAddr
 	ctg.Targets = targets
 	ctg.Duration = duration
+	ctg.MaxConcurrentFetches = maxConcurrentFetches
+	ctg.OngoingFetches = 0
 	ctg.CrossTrafficComponents = ctc
-	// ctg.Done = done
 }
 
-func (ctg *CrossTrafficGenerator) Fetch(curr CrossTrafficComponent, fetchChan chan int64, eventCounter int64) {
-	//fmt.Println(ctg.Target, curr.Name, curr.NextEvent, eventCounter)
+func (ctg *CrossTrafficGenerator) Fetch(curr CrossTrafficComponent) {
 	localAddr, err := net.ResolveIPAddr("ip", ctg.LocalAddr)
 	if err != nil {
 		panic(err)
@@ -48,7 +51,6 @@ func (ctg *CrossTrafficGenerator) Fetch(curr CrossTrafficComponent, fetchChan ch
 	localTCPAddr := net.TCPAddr{
 		IP: localAddr.IP,
 	}
-
 	webclient := &http.Client{
 		Transport: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
@@ -67,19 +69,24 @@ func (ctg *CrossTrafficGenerator) Fetch(curr CrossTrafficComponent, fetchChan ch
 
 	tIndex := rand.Int31n(int32(len(ctg.Targets)))
 	target := ctg.Targets[tIndex] + "/" + curr.Name
-	ctg.CounterStart++
-	log.Printf("CrossTrafficGenerator.Fetch %s\n", target)
+	log.Printf("%d CrossTrafficGenerator.Fetch %s\n",
+		time.Now().UTC().UnixNano(), target)
+	start := time.Now()
 	resp, err := webclient.Get(target)
 	if err != nil {
-		//fmt.Println("error", curr.Name, eventCounter)
-		fetchChan <- eventCounter
+		fmt.Println("error", curr.Name)
+		fmt.Println(err)
 		return
 	}
 	defer resp.Body.Close()
 	body, _ := ioutil.ReadAll(resp.Body)
-	ctg.CounterEnd++
-	ctg.CounterBytes += int64(len(body))
-	fetchChan <- eventCounter
+	duration := time.Since(start)
+	fmt.Printf("downloaded %d bytes in %s (%d B/s) with %d concurrent\n",
+		int(len(body)),
+		duration,
+		int(float64(len(body))/duration.Seconds()),
+		atomic.LoadInt64(&ctg.OngoingFetches))
+	atomic.AddInt64(&ctg.OngoingFetches, -1)
 }
 
 func (ctg *CrossTrafficGenerator) GenerateNextEvent(rate float64) int64 {
@@ -99,29 +106,28 @@ func (ctg *CrossTrafficGenerator) InitializeEventArr() {
 }
 
 func (ctg *CrossTrafficGenerator) Run() {
-	fetchChan := make(chan int64, 1e6)
-	var eventCounter int64 = 0
-	//var eventDone int64
-
 	log.Println("CrossTrafficGenerator.Run")
 
+	atomic.StoreInt64(&ctg.OngoingFetches, 0)
 	ctg.InitializeEventArr()
 	now := time.Now().UTC().UnixNano()
 
 	for ctg.End > now {
 		curr := ctg.CrossTrafficComponents[0]
 		time.Sleep(time.Duration(curr.NextEvent-now) * time.Nanosecond)
-		go ctg.Fetch(curr, fetchChan, eventCounter)
-		eventCounter++
-		ctg.CrossTrafficComponents[0].NextEvent = ctg.CrossTrafficComponents[0].NextEvent + ctg.GenerateNextEvent(ctg.CrossTrafficComponents[0].Rate)
-		if ctg.CrossTrafficComponents[0].NextEvent > ctg.CrossTrafficComponents[1].NextEvent { //optimization assuming order of magnitude difference in arrival rates
-			sort.Sort(ctg.CrossTrafficComponents)
+		atomic.AddInt64(&ctg.OngoingFetches, 1)
+		if atomic.LoadInt64(&ctg.OngoingFetches) < ctg.MaxConcurrentFetches {
+			go ctg.Fetch(curr)
+		} else {
+			fmt.Println("Skipping fetch, to many ongoing fetches")
+			atomic.AddInt64(&ctg.OngoingFetches, -1)
 		}
+		fmt.Printf("%s evtime %d ", ctg.CrossTrafficComponents[0].Name, ctg.CrossTrafficComponents[0].NextEvent)
+		ctg.CrossTrafficComponents[0].NextEvent = ctg.CrossTrafficComponents[0].NextEvent + ctg.GenerateNextEvent(ctg.CrossTrafficComponents[0].Rate)
+		fmt.Printf("nextev %d\n", ctg.CrossTrafficComponents[0].NextEvent)
+		// if ctg.CrossTrafficComponents[0].NextEvent > ctg.CrossTrafficComponents[1].NextEvent { //optimization assuming order of magnitude difference in arrival rates
+		sort.Sort(ctg.CrossTrafficComponents)
+		// }
 		now = time.Now().UTC().UnixNano()
 	}
-	//for eventDone < eventCounter {
-	//	<-fetchChan
-	//	eventDone++
-	//}
-	//ctg.Done <- 1
 }
