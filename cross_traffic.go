@@ -1,50 +1,71 @@
 package main
 
 import (
+	"container/heap"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"net"
 	"net/http"
-	"sort"
 	"sync/atomic"
 	"time"
 )
 
-type CrossTrafficComponent struct {
+type TrafficComponent struct {
 	Name      string  `json:"name"`
 	Rate      float64 `json:"rate"`
 	NextEvent int64
 }
 
-type CrossTrafficComponentArr []CrossTrafficComponent
-
-type CrossTrafficGenerator struct {
-	LocalAddr              string
-	Duration               int64
-	MaxConcurrentFetches   int64
-	OngoingFetches         int64
-	Targets                []string
-	CrossTrafficComponents CrossTrafficComponentArr
-	Start                  int64
-	End                    int64
-	CounterStart           int64
-	CounterEnd             int64
-	CounterBytes           int64
+func (tc *TrafficComponent) InitNextEvent(tstamp int64) {
+	if tc.NextEvent != 0 {
+		panic("in InitNextEvent() but NextEvent != 0")
+	}
+	tc.NextEvent = tstamp
+	tc.UpdateNextEvent()
+}
+func (tc *TrafficComponent) UpdateNextEvent() {
+	tc.NextEvent += int64((rand.ExpFloat64() / tc.Rate) * 1e9)
 }
 
-func (ctg *CrossTrafficGenerator) NewCrossTrafficGenerator(localAddr string, duration int64, maxConcurrentFetches int64, targets []string, ctc CrossTrafficComponentArr) {
-	ctg.LocalAddr = localAddr
-	ctg.Targets = targets
-	ctg.Duration = duration
-	ctg.MaxConcurrentFetches = maxConcurrentFetches
-	ctg.OngoingFetches = 0
-	ctg.CrossTrafficComponents = ctc
+type TCHeap []*TrafficComponent
+
+func (tch TCHeap) Len() int            { return len(tch) }
+func (tch TCHeap) Less(i, j int) bool  { return tch[i].NextEvent < tch[j].NextEvent }
+func (tch TCHeap) Swap(i, j int)       { tch[i], tch[j] = tch[j], tch[i] }
+func (tch *TCHeap) Push(x interface{}) { *tch = append(*tch, x.(*TrafficComponent)) }
+func (tch TCHeap) Pop() interface{}    { panic("no pop for efficiency") }
+
+type TrafficGenerator struct {
+	Targets              []string            `json:"targets"`
+	Duration             int64               `json:"duration"`
+	MaxConcurrentFetches int64               `json:"concurrent_fetches"`
+	TrafficComponents    []*TrafficComponent `json:"cross_traffic_components"`
+	LocalAddr            string
+	OngoingFetches       int64
+	Start                int64
+	End                  int64
+	Heap                 TCHeap
 }
 
-func (ctg *CrossTrafficGenerator) Fetch(curr CrossTrafficComponent) {
-	localAddr, err := net.ResolveIPAddr("ip", ctg.LocalAddr)
+func (tg *TrafficGenerator) Initialize(localAddr string) {
+	tg.LocalAddr = localAddr
+	atomic.StoreInt64(&tg.OngoingFetches, 0)
+	tg.OngoingFetches = 0
+	tg.Start = time.Now().UTC().UnixNano()
+	tg.End = tg.Start + tg.Duration*1e9
+	for _, tc := range tg.TrafficComponents {
+		tc.InitNextEvent(tg.Start)
+		heap.Push(&tg.Heap, tc)
+	}
+	if len(tg.Heap) != len(tg.TrafficComponents) {
+		panic("wrong number of entries in tg.Heap")
+	}
+}
+
+func (tg *TrafficGenerator) Fetch(curr *TrafficComponent) {
+	localAddr, err := net.ResolveIPAddr("ip", tg.LocalAddr)
 	if err != nil {
 		panic(err)
 	}
@@ -56,20 +77,20 @@ func (ctg *CrossTrafficGenerator) Fetch(curr CrossTrafficComponent) {
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				LocalAddr: &localTCPAddr,
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
+				Timeout:   5 * time.Second,
+				KeepAlive: 5 * time.Second,
 				DualStack: false,
 			}).DialContext,
 			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
+			IdleConnTimeout:       30 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 		},
 	}
 
-	tIndex := rand.Int31n(int32(len(ctg.Targets)))
-	target := ctg.Targets[tIndex] + "/" + curr.Name
-	log.Printf("%d CrossTrafficGenerator.Fetch %s\n",
+	tIndex := rand.Int31n(int32(len(tg.Targets)))
+	target := tg.Targets[tIndex] + "/" + curr.Name
+	log.Printf("%d TrafficGenerator.Fetch %s\n",
 		time.Now().UTC().UnixNano(), target)
 	start := time.Now()
 	resp, err := webclient.Get(target)
@@ -85,49 +106,25 @@ func (ctg *CrossTrafficGenerator) Fetch(curr CrossTrafficComponent) {
 		int(len(body)),
 		duration,
 		int(float64(len(body))/duration.Seconds()),
-		atomic.LoadInt64(&ctg.OngoingFetches))
-	atomic.AddInt64(&ctg.OngoingFetches, -1)
+		atomic.LoadInt64(&tg.OngoingFetches))
+	atomic.AddInt64(&tg.OngoingFetches, -1)
 }
 
-func (ctg *CrossTrafficGenerator) GenerateNextEvent(rate float64) int64 {
-	return int64((rand.ExpFloat64() / rate) * 1e9)
-}
-
-func (ctg *CrossTrafficGenerator) InitializeEventArr() {
-	ctg.Start = time.Now().UTC().UnixNano()
-	ctg.End = ctg.Start + ctg.Duration*1e9
-	rand.Seed(ctg.Start)
-	for i := range ctg.CrossTrafficComponents {
-		if ctg.CrossTrafficComponents[i].NextEvent == 0 {
-			ctg.CrossTrafficComponents[i].NextEvent = ctg.Start + ctg.GenerateNextEvent(ctg.CrossTrafficComponents[i].Rate)
-		}
-	}
-	sort.Sort(ctg.CrossTrafficComponents)
-}
-
-func (ctg *CrossTrafficGenerator) Run() {
-	log.Println("CrossTrafficGenerator.Run")
-
-	atomic.StoreInt64(&ctg.OngoingFetches, 0)
-	ctg.InitializeEventArr()
+func (tg *TrafficGenerator) Run() {
+	log.Println("TrafficGenerator.Run")
 	now := time.Now().UTC().UnixNano()
-
-	for ctg.End > now {
-		curr := ctg.CrossTrafficComponents[0]
+	for now < tg.End {
+		curr := tg.Heap[0]
 		time.Sleep(time.Duration(curr.NextEvent-now) * time.Nanosecond)
-		atomic.AddInt64(&ctg.OngoingFetches, 1)
-		if atomic.LoadInt64(&ctg.OngoingFetches) < ctg.MaxConcurrentFetches {
-			go ctg.Fetch(curr)
+		atomic.AddInt64(&tg.OngoingFetches, 1)
+		if atomic.LoadInt64(&tg.OngoingFetches) < tg.MaxConcurrentFetches {
+			go tg.Fetch(curr)
 		} else {
 			fmt.Println("Skipping fetch, to many ongoing fetches")
-			atomic.AddInt64(&ctg.OngoingFetches, -1)
+			atomic.AddInt64(&tg.OngoingFetches, -1)
 		}
-		fmt.Printf("%s evtime %d ", ctg.CrossTrafficComponents[0].Name, ctg.CrossTrafficComponents[0].NextEvent)
-		ctg.CrossTrafficComponents[0].NextEvent = ctg.CrossTrafficComponents[0].NextEvent + ctg.GenerateNextEvent(ctg.CrossTrafficComponents[0].Rate)
-		fmt.Printf("nextev %d\n", ctg.CrossTrafficComponents[0].NextEvent)
-		// if ctg.CrossTrafficComponents[0].NextEvent > ctg.CrossTrafficComponents[1].NextEvent { //optimization assuming order of magnitude difference in arrival rates
-		sort.Sort(ctg.CrossTrafficComponents)
-		// }
+		curr.UpdateNextEvent()
+		heap.Fix(&tg.Heap, 0)
 		now = time.Now().UTC().UnixNano()
 	}
 }

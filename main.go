@@ -4,34 +4,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 )
-
-type InputConf struct {
-	Targets                []string                `json:"targets"`
-	Duration               int64                   `json:"duration"`
-	ConcurrentFetches      int64                   `json:"concurrent_fetches"`
-	CrossTrafficComponents []CrossTrafficComponent `json:"cross_traffic_components"`
-}
 
 var localAddrStr string
 var stopRunning chan int64
 
 func CongestionStart(w http.ResponseWriter, r *http.Request) {
-	var conf InputConf
+	var tg TrafficGenerator
 	decoder := json.NewDecoder(r.Body)
-	err := decoder.Decode(&conf)
+	err := decoder.Decode(&tg)
 	if err != nil {
 		panic(err)
 	}
-	log.Println("Starting CrossTrafficGenerator")
-	ctg := new(CrossTrafficGenerator)
-	ctg.NewCrossTrafficGenerator(localAddrStr, conf.Duration,
-		conf.ConcurrentFetches, conf.Targets,
-		conf.CrossTrafficComponents)
-	go ctg.Run()
+	log.Println("Starting TrafficGenerator")
+	tg.Initialize(localAddrStr)
+	go tg.Run()
 }
 
 func ServiceStop(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +36,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	rand.Seed(time.Now().UTC().UnixNano())
 	http.HandleFunc("/congestion_start", CongestionStart)
 	http.HandleFunc("/service_stop", ServiceStop)
 	stopRunning = make(chan int64)
