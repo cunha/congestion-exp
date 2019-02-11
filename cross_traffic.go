@@ -65,6 +65,7 @@ func (tg *TrafficGenerator) Initialize(localAddr string) {
 }
 
 func (tg *TrafficGenerator) Fetch(curr *TrafficComponent) {
+	defer atomic.AddInt64(&tg.OngoingFetches, -1)
 	localAddr, err := net.ResolveIPAddr("ip", tg.LocalAddr)
 	if err != nil {
 		panic(err)
@@ -102,12 +103,12 @@ func (tg *TrafficGenerator) Fetch(curr *TrafficComponent) {
 	defer resp.Body.Close()
 	body, _ := ioutil.ReadAll(resp.Body)
 	duration := time.Since(start)
-	fmt.Printf("downloaded %d bytes in %s (%d B/s) with %d concurrent\n",
+	fmt.Printf("%d downloaded %d bytes in %s (%d B/s) with %d concurrent\n",
+		time.Now().UTC().UnixNano(),
 		int(len(body)),
 		duration,
 		int(float64(len(body))/duration.Seconds()),
 		atomic.LoadInt64(&tg.OngoingFetches))
-	atomic.AddInt64(&tg.OngoingFetches, -1)
 }
 
 func (tg *TrafficGenerator) Run() {
